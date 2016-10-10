@@ -1,0 +1,6 @@
+An AviSynth plugin to make video in blue color.
+
+usage:
+LoadPlugin("xxxxxx\TawawaFilter.dll")
+.....
+Tawawa()
