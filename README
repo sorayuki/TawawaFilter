@@ -1,4 +1,5 @@
 An AviSynth plugin to make video in blue color.
+DLL can be downloaded from "Release" above (in the right of "commit" and "branch").
 
 usage:
 LoadPlugin("xxxxxx\TawawaFilter.dll")
