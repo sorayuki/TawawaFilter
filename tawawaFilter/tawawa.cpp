@@ -29,10 +29,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <windows.h>
+#include <cmath>
 #include "Avisynth.h"
 
 class TawawaFilter : public GenericVideoFilter
 {
+private:
+	double lastPortion = -1, mixPortion;
+
 public:
 	TawawaFilter(PClip child, IScriptEnvironment* env)
 		: GenericVideoFilter(child)
@@ -53,6 +57,29 @@ public:
 		int dstPitch = newFrame->GetPitch();
 
 
+		double maxYinFrame = 0;
+		double minYinFrame = 255;
+
+		for (int ch = 0; ch < vi.height; ++ch)
+		{
+			const unsigned char* pcSrc = pSrc + srcPitch * ch;
+
+			for (int cw = 0; cw < vi.width; ++cw)
+			{
+				double y = pcSrc[2] * 0.3 + pcSrc[1] * 0.59 + pcSrc[0] * 0.11;
+
+				maxYinFrame = (y > maxYinFrame ? y : maxYinFrame);
+				minYinFrame = (y < minYinFrame ? y : minYinFrame);
+
+				pcSrc += 3;
+			}
+		}
+
+		/*proportion*/
+		mixPortion = pow(1-(maxYinFrame - minYinFrame) / 255, 4) + 1;
+		if(lastPortion >= 0)
+		    mixPortion = mixPortion * 0.2 + lastPortion * 0.8;
+		lastPortion = mixPortion;
 
 		for (int ch = 0; ch < vi.height; ++ch)
 		{
@@ -62,30 +89,38 @@ public:
 			for (int cw = 0; cw < vi.width; ++cw)
 			{
 				double y = pcSrc[2] * 0.3 + pcSrc[1] * 0.59 + pcSrc[0] * 0.11;
-				y = y / 255 * 200 + 55;
-				if (y > 255) y = 255;
 
-				int colorR, colorG;
+		        /*histo equalization*/
+				if(mixPortion > 0 && mixPortion <= 1)
+				    y = y * (1 - mixPortion) + (y - minYinFrame) * 1.0 / (maxYinFrame - minYinFrame) * 255 * mixPortion;
 
-				if (y < 70)
+				/*blue mapping*/
+				int colorR, colorG, colorB;
+
+				if (y < 10) {
 					colorR = 0;
-				else if (y < 85)
-					colorR = (y - 70) * 4.0;
-				else
-					colorR = (y - 85) * 1.0 / 170 * 195 + 60;
-				
-				pcDst[2] = colorR;
-
-				if (y < 70)
 					colorG = 90;
-				else if (y < 85)
-					colorG = (y - 70) * 2.6 + 90;
-				else
-					colorG = (y - 85) * 1.0 / 170 * 126 + 129;
+					colorB = 255;
+				}
+				else if (y < 30) {
+					colorR = (y-10) * 3.0;
+					colorG = (y-10) * 2.0 + 90;
+					colorB = 255;
+				}
+				else if (y < 230) {
+					colorR = (y - 30) * 1.0 / 200 * 195 + 60;
+					colorG = (y - 30) * 1.0 / 200 * 125 + 130;
+					colorB = 255;
+				}
+				else {
+					colorR = 255;
+					colorG = 255;
+					colorB = 255;
+				}
 
+				pcDst[2] = colorR;
 				pcDst[1] = colorG;
-
-				pcDst[0] = 255;
+				pcDst[0] = colorB;
 
 				pcSrc += 3;
 				pcDst += 3;
