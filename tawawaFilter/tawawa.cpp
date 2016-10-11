@@ -6,15 +6,15 @@ Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
 * Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
+list of conditions and the following disclaimer.
 
 * Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
 
 * Neither the name of this program nor the names of its
-  contributors may be used to endorse or promote products derived from
-  this software without specific prior written permission.
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -45,12 +45,14 @@ public:
 	{
 		PVideoFrame frame = child->GetFrame(n, env);
 		PVideoFrame newFrame = env->NewVideoFrame(vi);
-		
+
 		const unsigned char* pSrc = frame->GetReadPtr();
 		unsigned char* pDst = newFrame->GetWritePtr();
 
 		int srcPitch = frame->GetPitch();
 		int dstPitch = newFrame->GetPitch();
+
+
 
 		for (int ch = 0; ch < vi.height; ++ch)
 		{
@@ -63,11 +65,27 @@ public:
 				y = y / 255 * 200 + 55;
 				if (y > 255) y = 255;
 
-				int iy = y;
+				int colorR, colorG;
 
-				pcDst[2] = iy > 85 ? ((y - 85) / 255 * 340) : 0;
-				pcDst[1] = iy;
-				pcDst[0] = iy > 135 ? 255 : iy + 120;
+				if (y < 70)
+					colorR = 0;
+				else if (y < 85)
+					colorR = (y - 70) * 4.0;
+				else
+					colorR = (y - 85) * 1.0 / 170 * 195 + 60;
+				
+				pcDst[2] = colorR;
+
+				if (y < 70)
+					colorG = 90;
+				else if (y < 85)
+					colorG = (y - 70) * 2.6 + 90;
+				else
+					colorG = (y - 85) * 1.0 / 170 * 126 + 129;
+
+				pcDst[1] = colorG;
+
+				pcDst[0] = 255;
 
 				pcSrc += 3;
 				pcDst += 3;
