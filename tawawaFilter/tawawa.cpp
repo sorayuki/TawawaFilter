@@ -40,10 +40,8 @@ using namespace easycl;
 class TawawaFilter : public GenericVideoFilter
 {
     std::unique_ptr<EasyCL> cl;
-    std::unique_ptr<CLKernel> clKernConv;
     std::unique_ptr<CLKernel> clKernBlue;
 
-    std::vector<uint8_t> buffer;
 public:
 	TawawaFilter(PClip child, IScriptEnvironment* env)
 		: GenericVideoFilter(child)
@@ -51,16 +49,26 @@ public:
 		if (!vi.IsYV12())
 			env->ThrowError("TawawaFilter: Only YV12 input is supported.");
 
-        //vi.pixel_type = VideoInfo::CS_BGR24;
-
         cl.reset(EasyCL::createForFirstGpu());
         clKernBlue.reset(cl->buildKernelFromString(
-            "kernel void toblue(global uchar4* in, global uchar4* out) { \n"
+            "kernel void toblue(int width, int height, "
+            "    global uchar* inY, int inYRS, global uchar* inU, int inURS, global uchar* inV, inVRS, \n"
+            "    global uchar* outY, int outYRS, global uchar* outU, int outURS, global uchar* outV, int outVRS) \n"
+            "{ \n"
             "    const int gid = get_global_id(0); \n"
-            "    double y = in[gid].x; \n"
+            "    const int ch = (int)(gid / width); \n"
+            "    const int cw = gid - width * ch; \n"
+            "    const int ch_half = (ch - (ch % 2)) / 2; \n"
+            "    const int cw_half = (cw - (cw % 2)) / 2; \n"
+            "    const int idx = ch * inYRS + cw; \n"
+            "    const int outYidx = ch * outYRS + cw; \n"
+            "    const int outUidx = ch_half * outURS + cw_half; \n"
+            "    const int outVidx = ch_half * outVRS + cw_half; \n"
+            "    \n"
+            "    double y = inY[idx]; \n"
             "    float4 yf = (float4)(0.299, 0.587, 0.114, 0); \n"
-            "    float4 uf = (float4)(-0.14713, -0.28886, 0.436, 0); \n"
-            "    float4 vf = (float4)(0.615, -0.51499, -0.10001, 0); \n"
+            "    float4 uf = (float4)(-0.14713, -0.28886, 0.436, 128); \n"
+            "    float4 vf = (float4)(0.615, -0.51499, -0.10001, 128); \n"
             "    float4 rgbResult;"
             "    y = y / 255 *200 + 55; \n"
             "    if (y > 255) y = 255; \n"
@@ -69,110 +77,52 @@ public:
             "    rgbResult.x = iy > 85 ? ((y - 85) / 255 * 340) : 0; \n"
             "    rgbResult.y = iy; \n"
             "    rgbResult.z = iy > 135 ? 255 : iy + 120; \n"
-            "    rgbResult.w = 0; \n"
-            "    out[gid].x = dot(rgbResult, yf); \n"
-            "    out[gid].y = dot(rgbResult, uf); \n"
-            "    out[gid].z = dot(rgbResult, vf); \n"
-            //"    out[gid].x = rgbResult.x; \n"
-            //"    out[gid].y = rgbResult.y; \n"
-            //"    out[gid].z = rgbResult.z; \n"
+            "    rgbResult.w = 1; \n"
+            "    outY[outYidx] = dot(rgbResult, yf); \n"
+            "    outU[outUidx] = dot(rgbResult, uf); \n"
+            "    outV[outVidx] = dot(rgbResult, vf); \n"
+            "     \n"
             "}"
             , "toblue", ""));
-
-        buffer.resize(vi.width * vi.height * 4);
 	}
 
 	PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override
 	{
 		PVideoFrame frame = child->GetFrame(n, env);
 
-        {
-            const uint8_t* pSrcY = frame->GetReadPtr(PLANAR_Y);
-            int srcYP = frame->GetPitch(PLANAR_Y);
-            const uint8_t* pSrcU = frame->GetReadPtr(PLANAR_U);
-            int srcYU = frame->GetPitch(PLANAR_U);
-            const uint8_t* pSrcV = frame->GetReadPtr(PLANAR_V);
-            int srcYV = frame->GetPitch(PLANAR_V);
+        const uint8_t* pSrcY = frame->GetReadPtr(PLANAR_Y);
+        int srcYP = frame->GetRowSize(PLANAR_Y);
+        const uint8_t* pSrcU = frame->GetReadPtr(PLANAR_U);
+        int srcUP = frame->GetRowSize(PLANAR_U);
+        const uint8_t* pSrcV = frame->GetReadPtr(PLANAR_V);
+        int srcVP = frame->GetRowSize(PLANAR_V);
 
-            uint8_t* pDst = buffer.data();
-
-            for (int ch = 0; ch < vi.height; ++ch)
-            {
-                const uint8_t* pcSrcY = pSrcY + ch * srcYP;
-                const uint8_t* pcSrcU = pSrcU + ch * srcYU / 2;
-                const uint8_t* pcSrcV = pSrcV + ch * srcYV / 2;
-
-                uint8_t(*pcDst)[4] = (uint8_t(*)[4]) (pDst + ch * vi.width * 4);
-                for (int cw = 0; cw < vi.width; ++cw)
-                {
-                    pcDst[cw][0] = pcSrcY[cw];
-                    //pcDst[cw][1] = pcSrcY[cw];
-                    //pcDst[cw][2] = pcSrcY[cw];
-                    //pcDst[cw][3] = pcSrcY[cw];
-                    pcDst[cw][1] = pcSrcU[cw / 2];
-                    pcDst[cw][2] = pcSrcV[cw / 2];
-                    pcDst[cw][3] = 0;
-                }
-            }
-        }
-
-        clKernBlue->in(vi.width * vi.height, (const uint32_t*)buffer.data());
-        clKernBlue->out(vi.width * vi.height, (uint32_t*)buffer.data());
-        clKernBlue->run_1d(vi.width * vi.height, 512);
+        clKernBlue->in(vi.width);
+        clKernBlue->in(vi.height);
+        clKernBlue->in(srcYP * vi.height / 4, (const uint32_t*)pSrcY);
+        clKernBlue->in(srcYP);
+        clKernBlue->in(srcUP * vi.height / 4 / 2, (const uint32_t*)pSrcU);
+        clKernBlue->in(srcUP);
+        clKernBlue->in(srcVP * vi.height / 4 / 2, (const uint32_t*)pSrcV);
+        clKernBlue->in(srcVP);
 
         PVideoFrame newFrame = env->NewVideoFrame(vi);
 
-#if 1
-        uint8_t* prDstY = newFrame->GetWritePtr(PLANAR_Y);
-        int rYP = newFrame->GetPitch(PLANAR_Y);
-        uint8_t* prDstU = newFrame->GetWritePtr(PLANAR_U);
-        int rUP = newFrame->GetPitch(PLANAR_U);
-        uint8_t* prDstV = newFrame->GetWritePtr(PLANAR_V);
-        int rVP = newFrame->GetPitch(PLANAR_V);
+        uint8_t* pDstY = newFrame->GetWritePtr(PLANAR_Y);
+        int dstYP = frame->GetRowSize(PLANAR_Y);
+        uint8_t* pDstU = newFrame->GetWritePtr(PLANAR_U);
+        int dstUP = frame->GetRowSize(PLANAR_U);
+        uint8_t* pDstV = newFrame->GetWritePtr(PLANAR_V);
+        int dstVP = frame->GetRowSize(PLANAR_V);
 
-        {
-            uint8_t* pDstY = newFrame->GetWritePtr(PLANAR_Y);
-            int dstYP = frame->GetPitch(PLANAR_Y);
-            uint8_t* pDstU = newFrame->GetWritePtr(PLANAR_U);
-            int dstYU = frame->GetPitch(PLANAR_U);
-            uint8_t* pDstV = newFrame->GetWritePtr(PLANAR_V);
-            int dstYV = frame->GetPitch(PLANAR_V);
+        clKernBlue->out(dstYP * vi.height / 4, (uint32_t*)pDstY);
+        clKernBlue->in(dstYP);
+        clKernBlue->out(dstUP * vi.height / 4 / 2, (uint32_t*)pDstU);
+        clKernBlue->in(dstUP);
+        clKernBlue->out(dstVP * vi.height / 4 / 2, (uint32_t*)pDstV);
+        clKernBlue->in(dstVP);
 
-            uint8_t* pSrc = buffer.data();
-
-            for (int ch = 0; ch < vi.height; ++ch)
-            {
-                uint8_t* pcDstY = pDstY + ch * dstYP;
-                uint8_t* pcDstU = pDstU + ch * dstYU / 2;
-                uint8_t* pcDstV = pDstV + ch * dstYV / 2;
-
-                uint8_t(*pcSrc)[4] = (uint8_t(*)[4]) (pSrc + ch * vi.width * 4);
-                for (int cw = 0; cw < vi.width; ++cw)
-                {
-                    pcDstY[cw] = pcSrc[cw][0];
-                    //pcDstU[cw / 2] = pcSrc[cw][1];
-                    //pcDstV[cw / 2] = pcSrc[cw][2];
-                    pcDstU[cw / 2] = 128;
-                    pcDstV[cw / 2] = 128;
-                }
-            }
-        }
-#else
-        uint8_t* p1 = newFrame->GetWritePtr();
-        int pp = newFrame->GetPitch();
-
-        for (int ch = 0; ch < vi.height; ++ch)
-        {
-            uint8_t* pc = p1 + pp * ch;
-            uint8_t* pc2 = buffer.data() + 4 * vi.width * ch;
-            for (int cw = 0; cw < vi.width; ++cw)
-            {
-                pc[cw * 3] = pc2[cw * 4 + 2];
-                pc[cw * 3 + 1] = pc2[cw * 4 + 1];
-                pc[cw * 3 + 2] = pc2[cw * 4 + 0];
-            }
-        }
-#endif
+        clKernBlue->run_1d(vi.width * vi.height, cl->getMaxWorkgroupSize());
 
 		return newFrame;
 	}
@@ -188,6 +138,6 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
     if (!EasyCL::isOpenCLAvailable())
         env->ThrowError("%s", "OpenCL is not supported in your system.");
 
-    env->AddFunction("Tawawa", "c", CreateTawawaFilter, 0);
-	return "TawawaFilter";
+    env->AddFunction("TawawaGPU", "c", CreateTawawaFilter, 0);
+	return "TawawaGPUFilter";
 }
