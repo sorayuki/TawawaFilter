@@ -41,6 +41,7 @@ class TawawaFilter : public GenericVideoFilter
 {
     std::unique_ptr<EasyCL> cl;
     std::unique_ptr<CLKernel> clKernBlue;
+    int workSize;
 
 public:
 	TawawaFilter(PClip child, IScriptEnvironment* env)
@@ -84,6 +85,35 @@ public:
             "     \n"
             "}"
             , "toblue", ""));
+
+        int maxWorkSize = cl->getMaxWorkgroupSize();
+        workSize = vi.width * vi.height;
+        if (workSize % maxWorkSize == 0)
+            workSize = maxWorkSize;
+        else
+        {
+            while (workSize > maxWorkSize)
+            {
+                if (workSize % 2 == 0)
+                {
+                    workSize /= 2;
+                }
+                else if (workSize % 3 == 0)
+                {
+                    workSize /= 3;
+                }
+                else if (workSize % 5 == 0)
+                {
+                    workSize /= 5;
+                }
+                else if (workSize % 7 == 0)
+                {
+                    workSize /= 7;
+                }
+                else
+                    env->ThrowError("Can't handle video with height %d", vi.height);
+            }
+        }
 	}
 
 	PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override
@@ -122,7 +152,7 @@ public:
         clKernBlue->out(dstVP * vi.height / 4 / 2, (uint32_t*)pDstV);
         clKernBlue->in(dstVP);
 
-        clKernBlue->run_1d(vi.width * vi.height, cl->getMaxWorkgroupSize());
+        clKernBlue->run_1d(vi.width * vi.height, workSize);
 
 		return newFrame;
 	}
